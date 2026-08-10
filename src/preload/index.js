@@ -38,6 +38,18 @@ const api = {
   // 通过 LibreOffice 转换文件，返回转换后的字节数组
   libreOfficeConvert: (data, sourceExt, targetExt) => {
     return ipcRenderer.invoke('libreoffice-convert', { data, sourceExt, targetExt })
+  },
+  // 生成密钥对
+  generateKeyPair: (options) => {
+    return ipcRenderer.invoke('generate-key-pair', options)
+  },
+  // 生成随机密钥
+  generateRandomKeys: (params) => {
+    return ipcRenderer.invoke('generate-random-keys', params)
+  },
+  // JWT 操作
+  jwtOperate: (params) => {
+    return ipcRenderer.invoke('jwt-operate', params)
   }
 }
 

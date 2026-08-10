@@ -3,9 +3,10 @@ import { join } from 'path'
 import { writeFile, access, readFile, unlink } from 'fs/promises'
 import { execFile } from 'child_process'
 import { tmpdir } from 'os'
-import { randomUUID } from 'crypto'
+import { randomUUID, generateKeyPairSync, randomBytes, createHash, createHmac, createSign, createVerify } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { sm2 } from 'sm-crypto'
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -168,6 +169,496 @@ app.whenReady().then(() => {
     await unlink(outputPath).catch(() => {})
 
     return Array.from(new Uint8Array(output))
+  })
+
+  // ==================== 密钥对生成 IPC ====================
+
+  // ASN.1 DER 编码辅助函数
+  function encodeLength(len) {
+    if (len < 128) return Buffer.from([len])
+    const bytes = []
+    let l = len
+    while (l > 0) {
+      bytes.unshift(l & 0xff)
+      l >>>= 8
+    }
+    return Buffer.from([0x80 | bytes.length, ...bytes])
+  }
+
+  function encodeOID(oid) {
+    const parts = oid.split('.').map(Number)
+    const result = [40 * parts[0] + parts[1]]
+    for (let i = 2; i < parts.length; i++) {
+      let val = parts[i]
+      const bytes = []
+      if (val === 0) {
+        bytes.push(0)
+      } else {
+        while (val > 0) {
+          bytes.unshift(val & 0x7f)
+          val >>>= 7
+        }
+      }
+      for (let j = 0; j < bytes.length - 1; j++) {
+        bytes[j] |= 0x80
+      }
+      result.push(...bytes)
+    }
+    return Buffer.from([0x06, result.length, ...result])
+  }
+
+  function encodeOctetString(buf) {
+    return Buffer.concat([Buffer.from([0x04]), encodeLength(buf.length), buf])
+  }
+
+  function encodeBitString(buf) {
+    return Buffer.concat([Buffer.from([0x03]), encodeLength(buf.length + 1), Buffer.from([0x00]), buf])
+  }
+
+  function encodeInteger(num) {
+    const hex = num.toString(16)
+    const buf = Buffer.from(hex.length % 2 ? '0' + hex : hex, 'hex')
+    return Buffer.concat([Buffer.from([0x02]), encodeLength(buf.length), buf])
+  }
+
+  function encodeSequence(items) {
+    const content = Buffer.concat(items)
+    return Buffer.concat([Buffer.from([0x30]), encodeLength(content.length), content])
+  }
+
+  function encodeExplicit(tag, content) {
+    return Buffer.concat([Buffer.from([0xa0 | tag]), encodeLength(content.length), content])
+  }
+
+  // 将 SM2 原始密钥转换为 PEM 格式
+  function sm2ToPEM(publicKeyHex, privateKeyHex) {
+    const SM2_OID = '1.2.156.10197.1.301'
+    const EC_PUBLIC_KEY_OID = '1.2.840.10045.2.1'
+
+    // 公钥点: 04 || x || y (各64 hex chars = 32 bytes)
+    const pubKeyBytes = Buffer.from('04' + publicKeyHex, 'hex')
+
+    // 公钥 X.509 SubjectPublicKeyInfo
+    const algoId = encodeSequence([
+      encodeOID(EC_PUBLIC_KEY_OID),
+      encodeOID(SM2_OID)
+    ])
+    const pubKeyBS = encodeBitString(pubKeyBytes)
+    const spki = encodeSequence([algoId, pubKeyBS])
+    const publicKeyPem = '-----BEGIN PUBLIC KEY-----\n' +
+      spki.toString('base64').replace(/(.{64})/g, '$1\n') +
+      (spki.length % 64 ? '\n' : '') +
+      '-----END PUBLIC KEY-----\n'
+
+    // 私钥 SEC1 ECPrivateKey
+    const privKeyBytes = Buffer.from(privateKeyHex, 'hex')
+    const ecPrivKey = encodeSequence([
+      encodeInteger(1),
+      encodeOctetString(privKeyBytes),
+      encodeExplicit(0, encodeOID(SM2_OID)),
+      encodeExplicit(1, encodeBitString(pubKeyBytes))
+    ])
+    const privateKeyPem = '-----BEGIN EC PRIVATE KEY-----\n' +
+      ecPrivKey.toString('base64').replace(/(.{64})/g, '$1\n') +
+      (ecPrivKey.length % 64 ? '\n' : '') +
+      '-----END EC PRIVATE KEY-----\n'
+
+    return { publicKeyPem, privateKeyPem }
+  }
+
+  ipcMain.handle('generate-key-pair', async (_event, options) => {
+    const { algorithm, keyLength, curve, format: outputFormat } = options
+
+    try {
+      if (algorithm === 'SM2') {
+        // 使用 sm-crypto 生成 SM2 密钥对
+        const keypair = sm2.generateKeyPairHex()
+
+        if (outputFormat === 'PEM') {
+          const pem = sm2ToPEM(keypair.publicKey, keypair.privateKey)
+          return { publicKey: pem.publicKeyPem, privateKey: pem.privateKeyPem }
+        } else {
+          return { publicKey: keypair.publicKey, privateKey: keypair.privateKey }
+        }
+      }
+
+      // Node.js crypto 支持的算法
+      let type, options
+
+      switch (algorithm) {
+        case 'RSA':
+          type = 'rsa'
+          options = {
+            modulusLength: keyLength,
+            publicKeyEncoding: { type: 'spki', format: outputFormat === 'PEM' ? 'pem' : 'der' },
+            privateKeyEncoding: { type: 'pkcs8', format: outputFormat === 'PEM' ? 'pem' : 'der' }
+          }
+          break
+        case 'DSA':
+          type = 'dsa'
+          // DSA divisorLength: 1024→160, 2048→256, 3072→256
+          const divisorLength = keyLength >= 2048 ? 256 : 160
+          options = {
+            modulusLength: keyLength,
+            divisorLength,
+            publicKeyEncoding: { type: 'spki', format: outputFormat === 'PEM' ? 'pem' : 'der' },
+            privateKeyEncoding: { type: 'pkcs8', format: outputFormat === 'PEM' ? 'pem' : 'der' }
+          }
+          break
+        case 'EC':
+          type = 'ec'
+          options = {
+            namedCurve: curve,
+            publicKeyEncoding: { type: 'spki', format: outputFormat === 'PEM' ? 'pem' : 'der' },
+            privateKeyEncoding: { type: 'pkcs8', format: outputFormat === 'PEM' ? 'pem' : 'der' }
+          }
+          break
+        case 'EDDSA':
+          // Ed25519 / Ed448
+          type = curve // 'ed25519' or 'ed448'
+          options = {
+            publicKeyEncoding: { type: 'spki', format: outputFormat === 'PEM' ? 'pem' : 'der' },
+            privateKeyEncoding: { type: 'pkcs8', format: outputFormat === 'PEM' ? 'pem' : 'der' }
+          }
+          break
+        default:
+          return { error: `不支持的算法: ${algorithm}` }
+      }
+
+      const keyPair = generateKeyPairSync(type, options)
+
+      if (outputFormat === 'PEM') {
+        return { publicKey: keyPair.publicKey, privateKey: keyPair.privateKey }
+      } else {
+        // DER → HEX
+        return {
+          publicKey: keyPair.publicKey.toString('hex'),
+          privateKey: keyPair.privateKey.toString('hex')
+        }
+      }
+    } catch (e) {
+      return { error: `密钥生成失败: ${e.message}` }
+    }
+  })
+
+  // ==================== 随机密钥生成 IPC ====================
+
+  // 去除易混淆字符后的字符集
+  const CHAR_SETS = {
+    digits: '23456789',
+    lowercase: 'abcdefghjkmnpqrstuvwxyz',
+    uppercase: 'ABCDEFGHJKMNPQRSTUVWXYZ',
+    symbols: '!@#$%^&*()_+-=[]{}|;:,.<>?'
+  }
+
+  const FULL_CHAR_SETS = {
+    digits: '0123456789',
+    lowercase: 'abcdefghijklmnopqrstuvwxyz',
+    uppercase: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    symbols: '!@#$%^&*()_+-=[]{}|;:,.<>?~'
+  }
+
+  function buildCharset(options) {
+    const sets = options.removeAmbiguous ? CHAR_SETS : FULL_CHAR_SETS
+    let chars = ''
+    if (options.digits) chars += sets.digits
+    if (options.lowercase) chars += sets.lowercase
+    if (options.uppercase) chars += sets.uppercase
+    if (options.symbols) chars += sets.symbols
+    return chars || sets.digits + sets.lowercase + sets.uppercase
+  }
+
+  function generateRandomString(charset, length) {
+    const bytes = randomBytes(length * 2)
+    let result = ''
+    for (let i = 0; i < length; i++) {
+      result += charset[bytes[i] % charset.length]
+    }
+    return result
+  }
+
+  ipcMain.handle('generate-random-keys', async (_event, params) => {
+    const { type, count = 1, length = 32, options = {} } = params
+
+    try {
+      const results = []
+
+      for (let i = 0; i < count; i++) {
+        let value
+
+        switch (type) {
+          case 'random-string': {
+            const charset = buildCharset(options)
+            value = generateRandomString(charset, length)
+            break
+          }
+
+          case 'uuid': {
+            value = randomUUID()
+            break
+          }
+
+          case 'base64': {
+            const byteLen = Math.ceil(length / 8)
+            const buf = randomBytes(byteLen)
+            value = options.urlSafe
+              ? buf.toString('base64url').replace(/=+$/, '')
+              : buf.toString('base64').replace(/=+$/, '')
+            break
+          }
+
+          case 'hex': {
+            const byteLen = Math.ceil(length / 8)
+            value = randomBytes(byteLen).toString('hex')
+            break
+          }
+
+          case 'aes': {
+            const keyBytes = { 128: 16, 192: 24, 256: 32 }[length] || 32
+            const buf = randomBytes(keyBytes)
+            value = options.format === 'hex' ? buf.toString('hex') : buf.toString('base64')
+            break
+          }
+
+          case 'hmac': {
+            const keyBytes = Math.max(16, Math.ceil(length / 8))
+            const buf = randomBytes(keyBytes)
+            // 使用指定算法对随机数据做一次 hash，得到固定长度输出
+            const hash = createHash(options.algorithm || 'sha256').update(buf).digest()
+            value = options.format === 'hex' ? hash.toString('hex') : hash.toString('base64')
+            break
+          }
+
+          case 'salt': {
+            const byteLen = Math.ceil(length / 8)
+            const buf = randomBytes(byteLen)
+            if (options.format === 'hex') {
+              value = buf.toString('hex')
+            } else if (options.format === 'base64') {
+              value = buf.toString('base64')
+            } else {
+              value = buf.toString('hex')
+            }
+            break
+          }
+
+          case 'hash': {
+            const byteLen = Math.max(4, Math.ceil(length / 8))
+            const buf = randomBytes(byteLen)
+            const hash = createHash(options.algorithm || 'sha256').update(buf).digest()
+            value = hash.toString('hex')
+            break
+          }
+
+          default:
+            return { error: `不支持的密钥类型: ${type}` }
+        }
+
+        results.push(value)
+      }
+
+      return { results }
+    } catch (e) {
+      return { error: `密钥生成失败: ${e.message}` }
+    }
+  })
+
+  // ==================== JWT 操作 IPC ====================
+
+  function base64urlEncode(buf) {
+    return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  }
+
+  function base64urlDecode(str) {
+    let s = str.replace(/-/g, '+').replace(/_/g, '/')
+    while (s.length % 4) s += '='
+    return Buffer.from(s, 'base64')
+  }
+
+  function getSignAlgorithm(alg) {
+    switch (alg) {
+      case 'HS256': return 'sha256'
+      case 'HS384': return 'sha384'
+      case 'HS512': return 'sha512'
+      case 'RS256': return 'RSA-SHA256'
+      case 'RS384': return 'RSA-SHA384'
+      case 'RS512': return 'RSA-SHA512'
+      case 'ES256': return 'SHA256'
+      case 'ES384': return 'SHA384'
+      case 'ES512': return 'SHA512'
+      case 'EdDSA': return null
+      default: return null
+    }
+  }
+
+  // timing-safe comparison
+  function cryptoTimingSafeEqual(a, b) {
+    if (a.length !== b.length) return false
+    let result = 0
+    for (let i = 0; i < a.length; i++) {
+      result |= a[i] ^ b[i]
+    }
+    return result === 0
+  }
+
+  ipcMain.handle('jwt-operate', async (_event, params) => {
+    const { operation, header, payload, token, secret, algorithm } = params
+
+    try {
+      if (operation === 'decode') {
+        const parts = token.split('.')
+        if (parts.length !== 3) {
+          return { error: '无效的 JWT 格式，需要 Header.Payload.Signature 三部分' }
+        }
+
+        let headerJson, payloadJson
+        try {
+          headerJson = JSON.parse(base64urlDecode(parts[0]).toString('utf8'))
+        } catch {
+          return { error: 'Header 解析失败，不是有效的 Base64URL 编码 JSON' }
+        }
+        try {
+          payloadJson = JSON.parse(base64urlDecode(parts[1]).toString('utf8'))
+        } catch {
+          return { error: 'Payload 解析失败，不是有效的 Base64URL 编码 JSON' }
+        }
+
+        return {
+          header: headerJson,
+          payload: payloadJson,
+          signature: parts[2],
+          headerRaw: parts[0],
+          payloadRaw: parts[1]
+        }
+      }
+
+      if (operation === 'encode') {
+        const headerStr = JSON.stringify(header)
+        const payloadStr = JSON.stringify(payload)
+        const headerB64 = base64urlEncode(Buffer.from(headerStr, 'utf8'))
+        const payloadB64 = base64urlEncode(Buffer.from(payloadStr, 'utf8'))
+        const signingInput = `${headerB64}.${payloadB64}`
+
+        let signature
+
+        if (algorithm === 'none') {
+          signature = ''
+        } else if (algorithm.startsWith('HS')) {
+          const hashAlg = getSignAlgorithm(algorithm)
+          const hmac = createHmac(hashAlg, secret)
+          hmac.update(signingInput)
+          signature = base64urlEncode(hmac.digest())
+        } else if (algorithm.startsWith('RS') || algorithm.startsWith('ES')) {
+          const signAlg = getSignAlgorithm(algorithm)
+          const signer = createSign(signAlg)
+          signer.update(signingInput)
+          signature = base64urlEncode(signer.sign(secret))
+        } else if (algorithm === 'EdDSA') {
+          const signer = createSign(null)
+          signer.update(signingInput)
+          signature = base64urlEncode(signer.sign(secret))
+        } else {
+          return { error: `不支持的签名算法: ${algorithm}` }
+        }
+
+        const jwt = `${headerB64}.${payloadB64}.${signature}`
+        return { token: jwt }
+      }
+
+      if (operation === 'verify') {
+        const parts = token.split('.')
+        if (parts.length !== 3) {
+          return { error: '无效的 JWT 格式' }
+        }
+
+        const signingInput = `${parts[0]}.${parts[1]}`
+        const sigBuf = base64urlDecode(parts[2])
+        let valid = false
+        let reason = ''
+
+        let payloadJson = {}
+        try {
+          payloadJson = JSON.parse(base64urlDecode(parts[1]).toString('utf8'))
+        } catch { /* ignore */ }
+
+        if (algorithm === 'none') {
+          valid = parts[2] === ''
+          if (!valid) reason = 'none 算法签名应为空'
+        } else if (algorithm.startsWith('HS')) {
+          const hashAlg = getSignAlgorithm(algorithm)
+          const hmac = createHmac(hashAlg, secret)
+          hmac.update(signingInput)
+          const expected = hmac.digest()
+          valid = expected.length === sigBuf.length && cryptoTimingSafeEqual(expected, sigBuf)
+          if (!valid) reason = '签名验证失败，密钥不匹配或 Token 被篡改'
+        } else if (algorithm.startsWith('RS') || algorithm.startsWith('ES')) {
+          try {
+            const signAlg = getSignAlgorithm(algorithm)
+            const verifier = createVerify(signAlg)
+            verifier.update(signingInput)
+            valid = verifier.verify(secret, sigBuf)
+            if (!valid) reason = '签名验证失败，密钥不匹配或 Token 被篡改'
+          } catch (e) {
+            return { error: `验证失败: ${e.message}` }
+          }
+        } else if (algorithm === 'EdDSA') {
+          try {
+            const verifier = createVerify(null)
+            verifier.update(signingInput)
+            valid = verifier.verify(secret, sigBuf)
+            if (!valid) reason = '签名验证失败，密钥不匹配或 Token 被篡改'
+          } catch (e) {
+            return { error: `验证失败: ${e.message}` }
+          }
+        } else {
+          return { error: `不支持的验证算法: ${algorithm}` }
+        }
+
+        const now = Math.floor(Date.now() / 1000)
+        const timeChecks = []
+
+        if (payloadJson.exp !== undefined) {
+          const expired = now >= payloadJson.exp
+          timeChecks.push({
+            field: 'exp',
+            label: '过期时间',
+            value: new Date(payloadJson.exp * 1000).toISOString(),
+            passed: !expired,
+            message: expired ? 'Token 已过期' : 'Token 未过期'
+          })
+        }
+        if (payloadJson.nbf !== undefined) {
+          const notYet = now < payloadJson.nbf
+          timeChecks.push({
+            field: 'nbf',
+            label: '生效时间',
+            value: new Date(payloadJson.nbf * 1000).toISOString(),
+            passed: !notYet,
+            message: notYet ? 'Token 尚未生效' : 'Token 已生效'
+          })
+        }
+        if (payloadJson.iat !== undefined) {
+          timeChecks.push({
+            field: 'iat',
+            label: '签发时间',
+            value: new Date(payloadJson.iat * 1000).toISOString(),
+            passed: true,
+            message: ''
+          })
+        }
+
+        return {
+          valid,
+          reason: valid ? '' : reason,
+          payload: payloadJson,
+          timeChecks
+        }
+      }
+
+      return { error: `不支持的操作: ${operation}` }
+    } catch (e) {
+      return { error: `JWT 操作失败: ${e.message}` }
+    }
   })
 
   createWindow()

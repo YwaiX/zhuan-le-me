@@ -121,6 +121,15 @@
             <el-menu-item v-show="visibleMenuItems.has('/crypto/md5')" index="/crypto/md5">
               <span>MD5加密</span>
             </el-menu-item>
+            <el-menu-item v-show="visibleMenuItems.has('/crypto/keypair')" index="/crypto/keypair">
+              <span>公钥私钥生成</span>
+            </el-menu-item>
+            <el-menu-item v-show="visibleMenuItems.has('/crypto/keygen')" index="/crypto/keygen">
+              <span>密钥生成</span>
+            </el-menu-item>
+            <el-menu-item v-show="visibleMenuItems.has('/crypto/jwt')" index="/crypto/jwt">
+              <span>JWT工具</span>
+            </el-menu-item>
           </el-sub-menu>
           <el-sub-menu v-show="isSubMenuVisible" index="/format">
             <template #title>格式化工具</template>
@@ -188,6 +197,9 @@ const toolList = ref([
   { name: '代码对比', path: '/json/diff', parent: '/json' },
   { name: 'Base64加解密', path: '/crypto/base64', parent: '/crypto' },
   { name: 'MD5加密', path: '/crypto/md5', parent: '/crypto' },
+  { name: '公钥私钥生成', path: '/crypto/keypair', parent: '/crypto' },
+  { name: '密钥生成', path: '/crypto/keygen', parent: '/crypto' },
+  { name: 'JWT工具', path: '/crypto/jwt', parent: '/crypto' },
   { name: 'Java格式化', path: '/format/java', parent: '/format' },
   { name: 'JavaScript格式化', path: '/format/javascript', parent: '/format' },
   { name: 'TypeScript格式化', path: '/format/typescript', parent: '/format' },

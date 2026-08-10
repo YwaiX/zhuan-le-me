@@ -48,6 +48,24 @@ export const routes = [
     meta: { title: 'MD5加密' }
   },
   {
+    path: '/crypto/keypair',
+    name: 'crypto-keypair',
+    component: () => import('../views/crypto/KeyPairGenerate.vue'),
+    meta: { title: '公钥私钥生成' }
+  },
+  {
+    path: '/crypto/keygen',
+    name: 'crypto-keygen',
+    component: () => import('../views/crypto/KeyGenerate.vue'),
+    meta: { title: '密钥生成' }
+  },
+  {
+    path: '/crypto/jwt',
+    name: 'crypto-jwt',
+    component: () => import('../views/crypto/JwtTool.vue'),
+    meta: { title: 'JWT工具' }
+  },
+  {
     path: '/format/java',
     name: 'format-java',
     component: () => import('../views/format/CodeFormat.vue'),
