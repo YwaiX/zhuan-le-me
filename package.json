@@ -1,6 +1,6 @@
 {
   "name": "zhuan-le-me",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "一个文件的自白：今天你转了么？",
   "main": "./out/main/index.js",
   "author": "example.com",

@@ -115,7 +115,23 @@ function onGutterScroll(event, gutterEl) {
 function parseInput() {
   error.value = ''
   try {
-    return JSON.parse(input.value)
+    let value = JSON.parse(input.value)
+    // 处理多重序列化：输入本身是 JSON 字符串，其内容仍可解析时逐层展开到对象/数组
+    while (typeof value === 'string') {
+      let inner
+      try {
+        inner = JSON.parse(value)
+      } catch {
+        break
+      }
+      // 仅当内层仍是字符串或对象/数组时继续，避免把 "123" 等标量字符串误转成数字
+      if (typeof inner === 'string' || (inner !== null && typeof inner === 'object')) {
+        value = inner
+      } else {
+        break
+      }
+    }
+    return value
   } catch (e) {
     error.value = e.message
     return null
