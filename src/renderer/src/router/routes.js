@@ -24,6 +24,12 @@ export const routes = [
     meta: { title: 'PDF转换' }
   },
   {
+    path: '/convert/config',
+    name: 'config-convert',
+    component: () => import('../views/convert/ConfigConvert.vue'),
+    meta: { title: '配置格式转换' }
+  },
+  {
     path: '/json/format',
     name: 'json-format',
     component: () => import('../views/json/JsonFormat.vue'),

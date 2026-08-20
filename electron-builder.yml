@@ -14,7 +14,7 @@ extraResources:
 asarUnpack:
   - resources/**
 win:
-  executableName: 转了么
+  executableName: ZhuanLeMe
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

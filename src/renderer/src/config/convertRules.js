@@ -91,6 +91,40 @@ export const pdfTypeExtensions = {
   pdf: ['pdf']
 }
 
+// 配置格式转换规则 — 源格式对应可转换的目标格式
+// 未列出的组合均为不支持的转换关系，页面下拉菜单一律由此生成
+export const configRules = {
+  properties: ['yml'],
+  yml: ['properties', 'json'],
+  json: ['yml', 'xml'],
+  xml: ['json']
+}
+
+// 配置格式展示名
+export const configFormatLabels = {
+  properties: 'Properties',
+  yml: 'YML',
+  json: 'JSON',
+  xml: 'XML'
+}
+
+// 文件扩展名对应的配置格式
+export const configExtensionMap = {
+  properties: 'properties',
+  yml: 'yml',
+  yaml: 'yml',
+  json: 'json',
+  xml: 'xml'
+}
+
+// 配置格式对应的下载扩展名
+export const configTargetExtensions = {
+  properties: '.properties',
+  yml: '.yml',
+  json: '.json',
+  xml: '.xml'
+}
+
 // ========== 工具函数 ==========
 
 // 根据源格式扩展名获取可转换的目标格式
