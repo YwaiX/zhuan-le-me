@@ -31,6 +31,10 @@ const api = {
   pathExists: (filePath) => {
     return ipcRenderer.invoke('path-exists', filePath)
   },
+  // 复制文本到剪贴板（错误信息复制用）
+  copyText: (text) => {
+    return ipcRenderer.invoke('copy-text', text)
+  },
   // 获取项目内 LibreOffice 的 soffice.exe 路径
   getSofficePath: () => {
     return ipcRenderer.invoke('get-soffice-path')

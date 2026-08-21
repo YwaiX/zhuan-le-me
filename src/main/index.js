@@ -1,6 +1,6 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, clipboard } from 'electron'
 import { join } from 'path'
-import { writeFile, access, readFile, unlink } from 'fs/promises'
+import { writeFile, access, readFile, unlink, mkdir, rm } from 'fs/promises'
 import { execFile } from 'child_process'
 import { tmpdir } from 'os'
 import { randomUUID, generateKeyPairSync, randomBytes, createHash, createHmac, createSign, createVerify } from 'crypto'
@@ -105,6 +105,11 @@ app.whenReady().then(() => {
     }
   })
 
+  // 复制文本到剪贴板（错误信息复制用）
+  ipcMain.handle('copy-text', (_event, text) => {
+    clipboard.writeText(String(text ?? ''))
+  })
+
   // 获取项目内 LibreOffice 路径
   const getSofficePath = () => {
     if (app.isPackaged) {
@@ -116,19 +121,31 @@ app.whenReady().then(() => {
   ipcMain.handle('get-soffice-path', () => getSofficePath())
 
   // LibreOffice 转换：接收文件数据，写入临时文件，调用 soffice 转换，返回结果
-  ipcMain.handle('libreoffice-convert', async (_event, { data, sourceExt, targetExt }) => {
+  // 串行执行：并发调用会争抢同一用户配置锁，导致后续转换静默失败（未生成输出文件）
+  let loConvertQueue = Promise.resolve()
+
+  ipcMain.handle('libreoffice-convert', (_event, payload) => {
+    const task = loConvertQueue.then(() => runLibreOfficeConvert(payload))
+    loConvertQueue = task.catch(() => {})
+    return task
+  })
+
+  async function runLibreOfficeConvert({ data, sourceExt, targetExt }) {
     const sofficePath = getSofficePath()
     const id = randomUUID()
     const tmpDir = tmpdir()
     const inputPath = join(tmpDir, `${id}.${sourceExt}`)
     const outputPath = join(tmpDir, `${id}.${targetExt}`)
+    // 独立的用户配置目录：避免复用打包内嵌的便携 profile（只读/残留状态会导致转换静默失败）
+    const profilePath = join(tmpDir, `${id}_profile`)
+    await mkdir(profilePath, { recursive: true })
 
     await writeFile(inputPath, Buffer.from(data))
 
     // PDF 作为源文件时需要指定正确的导入过滤器
     const infilterMap = { pdf_docx: 'writer_pdf_import', pdf_pptx: 'impress_pdf_import' }
     const infilter = infilterMap[`${sourceExt}_${targetExt}`]
-    const args = ['--headless']
+    const args = ['--headless', `-env:UserInstallation=file:///${encodeURI(profilePath.replace(/\\/g, '/'))}`]
     if (infilter) args.push('--infilter=' + infilter)
     args.push('--convert-to', targetExt, '--outdir', tmpDir, inputPath)
 
@@ -167,9 +184,10 @@ app.whenReady().then(() => {
 
     await unlink(inputPath).catch(() => {})
     await unlink(outputPath).catch(() => {})
+    await rm(profilePath, { recursive: true, force: true }).catch(() => {})
 
     return Array.from(new Uint8Array(output))
-  })
+  }
 
   // ==================== 密钥对生成 IPC ====================
 
