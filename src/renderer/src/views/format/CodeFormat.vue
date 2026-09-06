@@ -48,7 +48,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import hljs from 'highlight.js/lib/common'
 import dockerfileHljs from 'highlight.js/lib/languages/dockerfile'
 import * as prettier from 'prettier/standalone'

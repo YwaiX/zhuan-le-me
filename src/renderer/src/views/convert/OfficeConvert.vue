@@ -94,7 +94,6 @@
 
 <script setup>
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { useFileConvert } from '../../composables/useFileConvert.js'
 import { officeRules, officeTypeExtensions } from '../../config/convertRules.js'
 import FileStatusBar from '../../components/FileStatusBar.vue'

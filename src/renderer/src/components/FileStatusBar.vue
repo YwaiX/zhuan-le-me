@@ -55,7 +55,6 @@
 
 <script setup>
 import { computed } from 'vue'
-import { ElMessage } from 'element-plus'
 
 const props = defineProps({
   status: { type: String, default: 'idle' },

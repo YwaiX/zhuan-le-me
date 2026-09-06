@@ -264,7 +264,6 @@
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus'
 import { computed, reactive, ref } from 'vue'
 import FileStatusBar from '../../components/FileStatusBar.vue'
 import { useTabKey } from '../../composables/useTabKey'

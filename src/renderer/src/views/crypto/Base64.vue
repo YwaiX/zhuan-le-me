@@ -67,7 +67,6 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import FileStatusBar from '../../components/FileStatusBar.vue'
 import { useTabKey } from '../../composables/useTabKey'
 

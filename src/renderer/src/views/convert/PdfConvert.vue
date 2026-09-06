@@ -95,7 +95,6 @@
 
 <script setup>
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { useFileConvert } from '../../composables/useFileConvert.js'
 import { pdfRules, pdfTypeExtensions } from '../../config/convertRules.js'
 import { dispatchPdfConvert } from '../../utils/pdfUtils.js'
