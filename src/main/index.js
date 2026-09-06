@@ -6,7 +6,13 @@ import { tmpdir } from 'os'
 import { randomUUID, generateKeyPairSync, randomBytes, createHash, createHmac, createSign, createVerify } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { sm2 } from 'sm-crypto'
+// ============ 启动性能打点（PERF_DEBUG=1 开启） ============
+const PERF_DEBUG = process.env.PERF_DEBUG === '1'
+const perfT0 = Date.now()
+function perfLog(label) {
+  if (PERF_DEBUG) console.log(`[perf][main] ${label}: ${Date.now() - perfT0}ms`)
+}
+perfLog('module-load')
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -23,8 +29,50 @@ function createWindow() {
   })
 
   mainWindow.on('ready-to-show', () => {
+    perfLog('window-ready-to-show')
     mainWindow.show()
+    perfLog('window-shown')
   })
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    perfLog('page-did-finish-load')
+    if (PERF_DEBUG) {
+      // 测量模式：等首帧渲染稳定后采集 DOM/样式探针与截图并退出，便于无人值守的冷启动采集与视觉冒烟
+      setTimeout(async () => {
+        try {
+          const probe = await mainWindow.webContents.executeJavaScript(`(() => {
+            const menuItem = document.querySelector('.el-menu-item')
+            const input = document.querySelector('.el-input__inner')
+            return JSON.stringify({
+              menuItems: document.querySelectorAll('.el-menu-item').length,
+              subMenus: document.querySelectorAll('.el-sub-menu').length,
+              empty: document.querySelectorAll('.el-empty').length,
+              inputs: document.querySelectorAll('.el-input').length,
+              menuItemColor: menuItem ? getComputedStyle(menuItem).color : null,
+              menuItemFont: menuItem ? getComputedStyle(menuItem).fontSize : null,
+              inputBorder: input ? getComputedStyle(input).borderColor : null,
+              cssSheets: document.styleSheets.length
+            })
+          })()`)
+          console.log(`[perf][main] dom-probe: ${probe}`)
+          const image = await mainWindow.webContents.capturePage()
+          const shotPath = join(app.getPath('temp'), 'zhuanleme_perf.png')
+          await writeFile(shotPath, image.toPNG())
+          console.log(`[perf][main] screenshot saved: ${shotPath}`)
+        } catch (e) {
+          console.log(`[perf][main] probe/screenshot failed: ${e.message}`)
+        }
+        app.quit()
+      }, 1200)
+    }
+  })
+
+  if (PERF_DEBUG) {
+    // 转发渲染进程的 [perf] 打点到主进程 stdout，便于汇总时间线
+    mainWindow.webContents.on('console-message', (_event, _level, message) => {
+      if (message) console.log(`[renderer] ${message}`)
+    })
+  }
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -39,6 +87,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  perfLog('app-ready')
+
   electronApp.setAppUserModelId('com.electron')
 
   app.on('browser-window-created', (_, window) => {
@@ -289,7 +339,8 @@ app.whenReady().then(() => {
 
     try {
       if (algorithm === 'SM2') {
-        // 使用 sm-crypto 生成 SM2 密钥对
+        // 使用 sm-crypto 生成 SM2 密钥对（按需动态加载，避免每次启动解析执行该库）
+        const { sm2 } = await import('sm-crypto')
         const keypair = sm2.generateKeyPairHex()
 
         if (outputFormat === 'PEM') {
@@ -680,6 +731,7 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+  perfLog('window-created')
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

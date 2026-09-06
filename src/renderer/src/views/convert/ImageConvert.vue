@@ -95,7 +95,6 @@
 
 <script setup>
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { useFileConvert } from '../../composables/useFileConvert.js'
 import { imageRules, imageTypeExtensions } from '../../config/convertRules.js'
 import { dispatchConvert } from '../../utils/imageUtils.js'
