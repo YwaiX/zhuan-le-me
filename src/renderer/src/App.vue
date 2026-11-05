@@ -4,7 +4,8 @@
     <header class="title-bar" @mousedown="onTitleBarMouseDown" @dblclick="onTitleBarDblClick">
       <!-- 左侧：应用图标 -->
       <div class="title-bar__left">
-        <img class="title-bar__icon" src="./assets/electron.svg" alt="icon" />
+        <img class="title-bar__icon" src="./assets/icon.png" alt="icon" />
+        <span class="title-bar__title">转了么</span>
       </div>
 
       <!-- 中间：搜索框 -->

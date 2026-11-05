@@ -34,6 +34,14 @@
   -webkit-user-drag: none;
 }
 
+.title-bar__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-left: 8px;
+  user-select: none;
+}
+
 /* 中间：搜索框（居中） */
 .title-bar__center {
   flex: 1;

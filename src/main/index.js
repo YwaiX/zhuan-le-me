@@ -1,11 +1,11 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, clipboard } from 'electron'
-import { join } from 'path'
-import { writeFile, access, readFile, unlink, mkdir, rm } from 'fs/promises'
+import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { execFile } from 'child_process'
+import { createHash, createHmac, createSign, createVerify, generateKeyPairSync, randomBytes, randomUUID } from 'crypto'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+import { access, mkdir, readFile, rm, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
-import { randomUUID, generateKeyPairSync, randomBytes, createHash, createHmac, createSign, createVerify } from 'crypto'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
+import { join } from 'path'
+import icon from '../../resources/icon.png'
 // ============ 启动性能打点（PERF_DEBUG=1 开启） ============
 const PERF_DEBUG = process.env.PERF_DEBUG === '1'
 const perfT0 = Date.now()
